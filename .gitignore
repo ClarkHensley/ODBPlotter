@@ -1,0 +1,8 @@
+venv/
+results/
+hdfs/
+
+*.zip
+backup.json
+test.txt
+views.txt
