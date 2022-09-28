@@ -22,10 +22,50 @@ from multiprocessing import Pool
 #
 #####
 
-class Settings:
-    pass
+class CustomAxis:
+    def __init__(self):
+        self.name = ""
 
-VIEWS = {
+        self.low = None
+        self.high = None
+        self.vals = None
+        self.size = None
+        self.tick_labels = None
+        self.ticks = None
+        self.offset = None
+
+    def get_graph_elements(self, step):
+        self.tick_labels = [format(round(v, 2), ".2f") for v in self.vals]
+        self.ticks = list(range(len(self.tick_labels)))
+        self.offset = int(0 - (self.vals[0] / step))
+
+
+class State:
+
+    def __init__(self):
+
+        self.cwd = os.path.dirname(os.path.realpath(__file__))
+        self.target_file = None
+
+        self.x = CustomAxis()
+        self.y = CustomAxis()
+        self.z = CustomAxis()
+        self.time_low = None
+        self.time_high = None
+        self.mesh_seed_size = None
+
+        self.main_loop = True
+        self.show_plots = True
+
+        self.bounded_nodes = None
+        self.bounded_nodes_size = None
+
+        self.out_nodes = None
+        self.out_nodes_low_time = None
+
+        self.loaded = False
+
+        self.views = {
         # "View: face on top"  : (elev, azim, roll)
         "Top Face: back"                    : (90, 0, 0),
         "Top Face: right"                   : (90, 0, -90),
@@ -101,189 +141,255 @@ VIEWS = {
         "Bottom-Left-Back Vertex: back"     : (-45, 135, 60)
         }    
 
+        self.views_list = list(self.views.keys())
+
+        self.angle = self.views_list[49]
+        self.elev = self.views[self.angle][0]
+        self.azim = self.views[self.angle][1]
+        self.roll = self.views[self.angle][2]
+
+
+        self. help_menu = """ODBPlotter Help:
+help             -- Show this menu
+quit, exit, q    -- Exit the ODBPlotter
+select           -- Select an hdf5 file (or generate an hdf5 file from a pair of .odb and .inp files)
+seed, mesh, step -- Set the Default Seed Size of the mesh
+extrema, range   -- Set the upper and lower x, y, and z bounds for plotting
+time             -- Set the upper and lower time bounds
+process          -- Actually load the selected data from the file set in select
+angle            -- Update the viewing angle
+show-all         -- Toggle if each time step will be shown in te matplotlib interactive viewer
+plot, show       -- Plot each selected timestep
+state, settings  -- Show the current state of the settings of the plotter"""
+
+
+    def __str__(self):
+        return f"""X Range:                 {self.x.low} to {self.x.high + self.mesh_seed_size}
+Y Range:                 {self.y.low} to {self.y.high + self.mesh_seed_size}
+Z Range:                 {self.z.low} to {self.z.high + self.mesh_seed_size}
+Time Range:              {self.time_low} to {self.time_high}
+Seed Size of the Mesh:   {self.mesh_seed_size}
+View Angle:              {self.angle}
+View Elevation:          {self.elev}
+View Azimuth:            {self.azim}
+View Roll:               {self.roll}
+Is each time-step being shown in the matplotlib interactive viewer? {'Yes' if self.show_plots else 'No'}
+
+Data loaded into memory: {'Yes' if self.loaded else 'No'}"""
+
+    def set_mesh_seed_size(self, seed):
+        self.mesh_seed_size = seed
+
+        if self.x.high is not None:
+            self.x.high -= self.mesh_seed_size
+
+        if self.y.high is not None:
+            self.y.high -= self.mesh_seed_size
+
+        if self.z.high is not None:
+            self.z.high -= self.mesh_seed_size
+
+    def set_x_extrema(self, low, high):
+        self.x.low = low
+        if self.mesh_seed_size is not None:
+            self.x.high = (high - self.mesh_seed_size)
+        else:
+            self.x.high = high
+
+    def set_y_extrema(self, low, high):
+        self.y.low = low
+        if self.mesh_seed_size is not None:
+            self.y.high = (high - self.mesh_seed_size)
+        else:
+            self.y.high = high
+
+    def set_z_extrema(self, low, high):
+        self.z.low = low
+        if self.mesh_seed_size is not None:
+            self.z.high = (high - self.mesh_seed_size)
+        else:
+            self.z.high = high
+
+    def pre_process_data(self):
+        self.out_nodes_low_time = self.out_nodes[self.out_nodes["Time"] == self.time_low]
+        self.x.vals = list()
+        self.y.vals = list()
+        self.z.vals = list()
+        for _, node in self.out_nodes_low_time.iterrows():
+            _x = round(node["X"], 5)
+            _y = round(node["Y"], 5)
+            _z = round(node["Z"], 5)
+            if (_x % self.mesh_seed_size == 0) and (_y % self.mesh_seed_size == 0) and (_z % self.mesh_seed_size == 0):
+                self.x.vals.append(_x)
+                self.y.vals.append(_y)
+                self.z.vals.append(_z)
+
+        self.x.vals = list(dict.fromkeys(self.x.vals))
+        self.y.vals = list(dict.fromkeys(self.y.vals))
+        self.z.vals = list(dict.fromkeys(self.z.vals))
+
+        self.x.vals.sort()
+        self.y.vals.sort()
+        self.z.vals.sort()
+
+        self.x.size = len(self.x.vals)
+
+        self.y.size = len(self.y.vals)
+        self.z.size = len(self.z.vals)
+
+        self.x.vals.append(self.x.vals[-1] + self.mesh_seed_size)
+        self.y.vals.append(self.y.vals[-1] + self.mesh_seed_size)
+        self.z.vals.append(self.z.vals[-1] + self.mesh_seed_size)
+
+        self.x.get_graph_elements(self.mesh_seed_size)
+        self.y.get_graph_elements(self.mesh_seed_size)
+        self.z.get_graph_elements(self.mesh_seed_size)
+
+        self.loaded = True
+
+
 def main():
 
-    cwd, target_file = process_input()
+    state = State()
 
-    x_low, x_high, y_low, y_high, z_low, z_high, time_low, time_high = get_extrema()
+    # TODO Process input json file and/or cli switches here
+    # process_input(state)
 
-    step = get_step()
-
-    # You must always subtract one step size from the max, because of how it is discreteized
-    x_high -= step
-    y_high -= step
-    z_high -= step
-
-    # Adapted from CJ's read_hdf5.py
-    coords_df = get_coords(target_file)
-    bounded_nodes = list(
-            coords_df[
-                (coords_df["x"] <= x_high) & (coords_df["x"] >= x_low) &
-                (coords_df["y"] <= y_high) & (coords_df["y"] >= y_low) &
-                (coords_df["z"] <= z_high) & (coords_df["z"] >= z_low)]["Node Labels"]
-            )
-
-    print(f"Extracting Data for {len(bounded_nodes)} nodes")
-    with Pool() as pool:
-        results = pool.map(read_node_data, zip(bounded_nodes, [target_file for _ in range(len(bounded_nodes))]))
-
-    out_nodes = pd.concat(results)
-    print("Filtering by Time")
-    out_nodes = out_nodes[(out_nodes["Time"] <= time_high) & (out_nodes["Time"] >= time_low)]
-
-    #TODO Is it worth trying to pre-filter, i.e., keep x and y constant, move z, keep x and z constant, move y, etc.?
-    print("Pre-processing data")
-    out_nodes_low_time = out_nodes[out_nodes["Time"] == time_low]
-    Xs = list()
-    Ys = list()
-    Zs = list()
-    for _, node in out_nodes_low_time.iterrows():
-        x = round(node["X"], 5)
-        y = round(node["Y"], 5)
-        z = round(node["Z"], 5)
-        if (x / step == x // step) and (y / step == y // step) and (z / step == z // step):
-            Xs.append(x)
-            Ys.append(y)
-            Zs.append(z)
-
-    Xs = list(dict.fromkeys(Xs))
-    Ys = list(dict.fromkeys(Ys))
-    Zs = list(dict.fromkeys(Zs))
-
-    Xs.sort()
-    Ys.sort()
-    Zs.sort()
-
-    x_count = len(Xs)
-    y_count = len(Ys)
-    z_count = len(Zs)
-
-    Xs.append(Xs[-1] + step)
-    Ys.append(Ys[-1] + step)
-    Zs.append(Zs[-1] + step)
-
-    x_tick_labels = [format(round(x, 2), ".2f") for x in Xs]
-    x_ticks = list(range(len(x_tick_labels)))
-    x_offset = int(0 - (Xs[0] / step))
-
-    y_tick_labels = [format(round(y, 2), ".2f") for y in Ys]
-    y_ticks = list(range(len(y_tick_labels)))
-    y_offset = int(0 - (Ys[0] / step))
-
-    z_tick_labels = [format(round(z, 2), ".2f") for z in Zs]
-    z_ticks = list(range(len(z_tick_labels)))
-    z_offset = int(0 - (Zs[0] / step))
-
-    print("Results Gathered.")
-
-    results_dir = os.path.join(cwd, "results")
-    if not os.path.exists(results_dir):
-        os.mkdir(results_dir)
+    #############################################
 
     # Outer while governs user input
+    user_input = ""
+    print("ODBPlotter v.0.1")
+    while state.main_loop:
+        print()
+        user_input = input("> ")
+        user_input = user_input.strip().lower()
+
+        match(user_input):
+
+            case ("exit" | "quit" | "q"):
+                state.main_loop = False
+
+            case ("select"):
+                select_files(state)
+                print(f"Target .hdf5 file: {state.target_file}")
+
+            case ("seed" | "mesh" | "step"):
+                set_seed_size(state)
+                print(f"Seed size set to: {state.mesh_seed_size}")
+
+            case ("extrema" | "range"):
+                get_extrema(state)
+                print(f"Physical Range values updated")
+
+            case ("time"):
+                set_time(state)
+                print(f"Time Range values updated")
+
+            case ("process"):
+                load_hdf(state)
+
+            case ("angle"):
+                get_views(state)
+                print(f"Angle Updated")
+
+            case ("show-all"):
+                state.show_plots = not state.show_plots
+                print(f"Plots will now {'BE' if state.show_plots else 'NOT BE'} shown")
+
+            case ("plot" | "show"):
+                plot_voxels(state)
+
+            case ("state" | "settings"):
+                print(state)
+
+            case ("help"):
+                print(state.help_menu)
+
+            case _:
+                print('Invalid option. Use "help" to see available options')
+
+
+def confirm(message, default=None):
     while True:
-        elev, azim, roll = get_views()
+        print(message)
 
-        user_input = ""
-        while user_input.lower() not in ("yes", "y", "no", "n"):
-            user_input = input("Would you like to view each timestep as it is plotted? (y/n): ")
+        if default is None:
+            user_input = input("Is this correct (y/n)? ")
             if user_input.lower() in ("yes", "y"):
-                show_plots = True
+                return True
             elif user_input.lower() in ("no", "n"):
-                show_plots = False
+                return False
             else:
-                print('Error: Please enter "yes" or "no" or "y" or "n"')
+                print("Error: invalid input")
 
-        # out_nodes["Time"] has the time values for each node, we only need one
-        # Divide length by len(bounded_nodes), go up to that
-        times = out_nodes["Time"]
-        final_time_idx = int(len(times) / len(bounded_nodes))
-        for current_time in times[:final_time_idx]:
-            curr_nodes = out_nodes[times == current_time]
-            current_time_name = format(round(current_time, 2), ".2f")
-            print(f"Plotting time step {current_time_name}")
-            file_name = target_file.split("/")[-1].split(".")[0]
-            save_str = f"{results_dir}/{file_name}-{current_time_name}.png"
+        elif isinstance(default, str):
+            if default.lower() in ("y", "yes"):
+                user_input = input("Is this correct (Y/n)? ")
+                if user_input.lower() in ("yes", "y", ""):
+                    return True
+                elif user_input.lower() in ("no", "n"):
+                    return False
+                else:
+                    print("Error: invalid input")
 
-            x_ind, y_ind, z_ind = np.indices((x_count, y_count, z_count))
-            voxels = ((x_ind <= 0 ) | (x_ind >= x_count - 1)) | ((y_ind <= 0) | (y_ind >= y_count - 1)) | ((z_ind <= 0 ) | (z_ind >= z_count - 1))
-            colors = np.ndarray(shape=(x_count, y_count, z_count), dtype=object)
-
-            fig = plt.figure(figsize=(19.2, 10.8))
-            ax = plt.axes(projection="3d", label=f"{file_name}-{current_time_name}")
-
-            ax.set_box_aspect((x_count, y_count, z_count))
-            ax.view_init(elev=elev, azim=azim, roll=roll)
-
-            ax.set_xlabel("x")
-            ax.set_xticks(x_ticks)
-            ax.set_xticklabels(x_tick_labels)
-
-            ax.set_ylabel("y")
-            ax.set_yticks(y_ticks)
-            ax.set_yticklabels(y_tick_labels)
-
-            ax.set_zlabel("z")
-            ax.set_zticks(z_ticks)
-            ax.set_zticklabels(z_tick_labels)
-
-            ax.set_title(f"3D Contour, time step: {current_time_name}")
-
-            fig.add_axes(ax, label=f"{file_name}-{current_time_name}")
-            for idx, node in curr_nodes.iterrows():
-                x = node["X"]
-                y = node["Y"]
-                z = node["Z"]
-                temp = node["Temp"]
-                if (x / step == x // step) and (y / step == y // step) and (z / step == z // step):
-                    color = "blue"
-                    if temp >= 1700:
-                        color = "gray"
-                    elif temp >= 1500:
-                        color = "crimson"
-                    elif temp >= 1300:
-                        color = "red"
-                    elif temp >= 1100:
-                        color = "goldenrod"
-                    elif temp >= 900:
-                        color = "yellow"
-                    elif temp >= 700:
-                        color = "lime"
-                    elif temp >= 500:
-                        color = "green"
-                    elif temp >= 300:
-                        color = "cyan"
-
-                    colors[round(x / step) + x_offset, round(y / step) + y_offset, round(z / step) + z_offset] = mcolors.CSS4_COLORS[color]
-                    #colors[round(x / step) + x_offset, round(y / step) + y_offset, round(z / step) + z_offset] = mcolors.CSS4_COLORS["white"]
-
-            ### TESTING
-            #  colors[0, 0, 0] = mcolors.CSS4_COLORS["red"]
-            #  colors[0, 0, 2] = mcolors.CSS4_COLORS["orange"]
-            #  colors[2, 0, 0] = mcolors.CSS4_COLORS["yellow"]
-            #  colors[2, 0, 2] = mcolors.CSS4_COLORS["green"]
-            #  colors[0, 2, 0] = mcolors.CSS4_COLORS["cyan"]
-            #  colors[0, 2, 2] = mcolors.CSS4_COLORS["blue"]
-            #  colors[2, 2, 0] = mcolors.CSS4_COLORS["magenta"]
-            #  colors[2, 2, 2] = mcolors.CSS4_COLORS["purple"]
-            ###
-
-            ax.voxels(voxels, facecolors=colors)
-
-            plt.savefig(save_str)
-            if show_plots:
-                plt.show()
-            plt.close(fig)
+            elif default.lower() in ("n", "no"):
+                user_input = input("Is this correct (y/N)? ")
+                if user_input.lower() in ("yes", "y"):
+                    return True
+                elif user_input.lower() in ("no", "n", ""):
+                    return False
+                else:
+                    print("Error: invalid input")
 
 
-def get_extrema():
+def select_files(state):
+    odb_options = ("odb", ".odb")
+    hdf_options = (".hdf", "hdf", ".hdf5", "hdf5")
+
+    while True:
+        user_input = input('Please enter either "hdf" if you plan to open .hdf5 file or "odb" if you plan to open a .odb file: ')
+        user_input = user_input.strip().lower()
+
+        if user_input in odb_options or user_input in hdf_options:
+            if(confirm(f"You entered {user_input}", "yes")):
+                break
+
+        else:
+            print("Error: invalid input")
+
+    if user_input in odb_options:
+        # process odb
+        while True:
+            user_input = input("Please enter the path of the odb file: ")
+            if(confirm(f"You entered {user_input}", "yes")):
+                odb = user_input
+                break
+
+        while True:
+            user_input = input(f"Please enter the path of the inp file for {odb}: ")
+            if(confirm(f"You entered {user_input}", "yes")):
+                inp = user_input
+                break
+
+        state.target_file = process_odb([odb, inp], state.cwd)
+
+    elif user_input in hdf_options:
+        # process hdf
+        while True:
+            user_input = input("Please enter the path of the hdf5 file, or the name of the hdf5 file in the hdfs directory: ")
+            if(confirm(f"You entered {user_input}", "yes")):
+                break
+        state.target_file = ensure_hdf(user_input, state.cwd)
+
+
+def get_extrema(state):
     while True:
         # Get the desired coordinates and time steps to plot
         extrema = {
                 ("lower X", "upper X"): None,
                 ("lower Y", "upper Y"): None,
                 ("lower Z", "upper Z"): None,
-                ("lower Time", "upper Time"): None
                 }
         for extremum in extrema:
             extrema[extremum] = process_extrema(extremum)
@@ -291,29 +397,55 @@ def get_extrema():
         x_low, x_high = extrema[("lower X", "upper X")]
         y_low, y_high = extrema[("lower Y", "upper Y")]
         z_low, z_high = extrema[("lower Z", "upper Z")]
-        time_low, time_high = extrema[("lower Time", "upper Time")]
-        print("SELECTED VALUES:")
-        print(f"X    From {x_low} to {x_high}")
-        print(f"Y    From {y_low} to {y_high}")
-        print(f"Z    From {z_low} to {z_high}")
-        print(f"Time From {time_low} to {time_high}")
         print()
-        is_correct = input("Are these values correct? (Y/n): ")
-        if is_correct.lower() in ("", "y", "yes"):
-            return x_low, x_high, y_low, y_high, z_low, z_high, time_low, time_high
+        if confirm(f"SELECTED VALUES:\nX from {x_low} to {x_high}\nY from {y_low} to {y_high}\nZ from {z_low} to {z_high}", "yes"):
+            state.set_x_extrema(x_low, x_high)
+            state.set_y_extrema(y_low, y_high)
+            state.set_z_extrema(z_low, z_high)
+            break
 
 
-def get_step():
+def set_seed_size(state):
     while True:
         try:
-            step = float(input("Enter the Default Seed Size of the Mesh: (TODO HOW TO WORD THIS) "))
+            step = float(input("Enter the Default Seed Size of the Mesh: "))
 
-            print(f"Default Seed Size: {step}")
-            is_correct = input("Is this correct? (Y/n): ")
-            if is_correct.lower() in ("", "y", "yes"):
-                return step
+            if confirm(f"Default Seed Size: {step}", "yes"):
+                state.set_mesh_seed_size(step)
+                break
+
         except ValueError:
             print("Error, Default Seed Size must be a number")
+
+
+def set_time(state):
+    while True:
+        values = [("lower time", 0, "0"), ("upper time", np.inf, "infinity")]
+        lower_time = None
+        upper_time = None
+        for i, v in enumerate(values): 
+            key, default, default_text = v
+            while True:
+                try:
+                    user_input = input(f"Enter the {key} value you would like to plot (Leave blank for {default_text}): ")
+                    if user_input == "":
+                        result = default
+                    else:
+                        result = float(user_input)
+                    
+                    if i == 0:
+                        lower_time = result
+                    else:
+                        upper_time = result
+                    break
+
+                except ValueError:
+                    print("Error, all selected time values must be positive numbers")
+
+        if confirm(f"You entered {lower_time} as the starting time and {upper_time} as the ending time.", "yes"):
+            state.time_low = lower_time
+            state.time_high = upper_time
+            break
 
 
 def process_extrema(keys):
@@ -323,11 +455,11 @@ def process_extrema(keys):
             inf_addon = ""
             inf_val = np.inf
         else:
-            inf_addon = "negative"
+            inf_addon = "negative "
             inf_val = -1 * np.inf
         while True:
             try:
-                user_input = input(f"Enter the {key} value you would like to plot (Leave blank for {inf_addon} infinity): ")
+                user_input = input(f"Enter the {key} value you would like to plot (Leave blank for {inf_addon}infinity): ")
                 if user_input == "":
                     results[i] = inf_val
                 else:
@@ -356,37 +488,85 @@ def process_input():
         # Process the given odb and inp files
         target_file = process_odb(results, cwd)
     else:
-        sys.exit("Error: You must supply either a .hdf5 file to read from or a pair of .odb and .inp files to process")
+        pass
+        #sys.exit("Error: You must supply either a .hdf5 file to read from or a pair of .odb and .inp files to process")
 
     return cwd, target_file
 
 
-def get_views():
-    global VIEWS
-    views_list = list(VIEWS.keys())
+def load_hdf(state):
+    
+    # First, ensure that the necessary parameters are set to load the file
+    # Are x, y, and z set?
+    if state.x.low is None or state.x.high is None or state.y.low is None or state.y.high is None or state.z.low is None or state.z.high is None:
+        print('Error, you must set the physical extrema with the "extrema" or "range" commands')
+        return
+
+    if state.time_low is None or state.time_high is None:
+        print('Error, you must set the time extrema with the "time" command')
+        return
+
+    if state.mesh_seed_size is None:
+        print('Error, you must set the default seed size of the mesh with the "seed" "mesh" or "step" commands')
+        return
+    
+    if state.target_file is None:
+        print('Error, you must set the .hdf5 file you wish to open with the "select" command')
+        return
+
+    # Adapted from CJ's read_hdf5.py
+    coords_df = get_coords(state.target_file)
+    state.bounded_nodes = list(
+            coords_df[
+                (coords_df["x"] <= state.x.high) & (coords_df["x"] >= state.x.low) &
+                (coords_df["y"] <= state.y.high) & (coords_df["y"] >= state.y.low) &
+                (coords_df["z"] <= state.z.high) & (coords_df["z"] >= state.z.low)]["Node Labels"]
+            )
+
+    state.bounded_nodes_size = len(state.bounded_nodes)
+
+    with Pool() as pool:
+        results = pool.map(read_node_data, zip(state.bounded_nodes, [state.target_file for _ in range(state.bounded_nodes_size)]))
+
+    state.out_nodes = pd.concat(results)
+    state.out_nodes = state.out_nodes[(state.out_nodes["Time"] <= state.time_high) & (state.out_nodes["Time"] >= state.time_low)]
+
+    state.pre_process_data()
+
+
+def get_views(state):
     while True:
         print("Please Select a Preset View for your plots: ")
         print('To view all default presets, please enter "list"')
         print ('Or, to specify your own view angle, please enter "custom"')
         print("Important Defaults: Top Face: 4, Right Face: 14, Front Face: 18, Top/Right/Front Isometric: 50")
-        user_input = input()
+        user_input = input("> ")
         if user_input.lower() == "list":
-            print_views(views_list)
+            print_views(state.views_list)
         elif user_input.lower() == "custom":
-            return get_custom_views()
+            elev, azim, roll = get_custom_views(state)
+            state.angle = "Custom"
+            state.elev = elev
+            state.azim = azim
+            state.roll = roll
+            return
         else:
             try:
                 user_input = int(user_input)
                 if 0 > user_input > (len(views_list) + 1):
                     raise ValueError
 
-                return VIEWS[views_list[user_input - 1]]
+                state.angle = state.views_list[user_input - 1]
+                state.elev = state.views[state.views_list[user_input - 1]][0]
+                state.azim = state.views[state.views_list[user_input - 1]][1]
+                state.roll = state.views[state.views_list[user_input - 1]][2]
+                return
 
             except ValueError:
-                print(f'Error: input must be "list," "custom," or an integer between 1 and {len(views_list) + 1}')
+                print(f'Error: input must be "list," "custom," or an integer between 1 and {len(state.views_list) + 1}')
 
 
-def get_custom_views():
+def get_custom_views(state):
     while True:
         while True:
             try:
@@ -419,12 +599,7 @@ def get_custom_views():
             except ValueError:
                 print("Error, Roll Value must be a number or left blank")
 
-        print(f"Elevation: {elev}")
-        print(f"Azimuth:   {azim}")
-        print(f"Roll:      {roll}")
-        print()
-        is_correct = input("Are these values correct? (Y/n): ")
-        if is_correct.lower() in ("", "y", "yes"):
+        if confirm(f"Elevation: {elev}\nAzimuth:   {azim}\nRoll:      {roll}", "yes"):
             break
 
     if elev == "default":
@@ -441,6 +616,106 @@ def print_views(views):
     print("View Index | View Angle: Face on Top")
     for idx, view in enumerate(views):
         print(f"{idx + 1}: {view}")
+    print()
+
+
+def plot_voxels(state):
+
+    if state.out_nodes is None:
+        print('Error, you must load the contents of a .hdf5 file into memory with the "process" command in order to plot')
+        return
+
+    results_dir = os.path.join(state.cwd, "results")
+    if not os.path.exists(results_dir):
+        os.mkdir(results_dir)
+
+    # out_nodes["Time"] has the time values for each node, we only need one
+    # Divide length by len(bounded_nodes), go up to that
+    times = state.out_nodes["Time"]
+    final_time_idx = int(len(times) / state.bounded_nodes_size)
+    # If you're showing every plot, do it slowly, in order
+    if state.show_plots:
+        for current_time in times[:final_time_idx]:
+            plot_time_slice(current_time, times, state, True)
+
+    # If each plot is not shown, batch-process, out of order.
+    else:
+        with Pool() as pool:
+            print("Hello")
+            pool.imap_unordered(plot_time_slice, zip(times[:final_time_idx], [times for _ in range(final_time_idx)], [state for _ in range(final_time_idx)], [False for _ in range(final_time_idx)]))
+
+
+def plot_time_slice(current_time, times, state, show_plot):
+    curr_nodes = state.out_nodes[times == current_time]
+    current_time_name = format(round(current_time, 2), ".2f")
+    print(f"Plotting time step {current_time_name}")
+    file_name = state.target_file.split("/")[-1].split(".")[0]
+    save_str = f"{results_dir}/{file_name}-{current_time_name}.png"
+
+    voxels = create_hollow_array(state.x.size, state.y.size, state.z.size)
+    colors = np.empty(shape=(state.x.size, state.y.size, state.z.size), dtype=object)
+
+    fig = plt.figure(figsize=(19.2, 10.8))
+    ax = plt.axes(projection="3d", label=f"{file_name}-{current_time_name}")
+
+    ax.set_box_aspect((state.x.size, state.y.size, state.z.size))
+    ax.view_init(elev=state.elev, azim=state.azim, roll=state.roll)
+
+    ax.set_xlabel("x")
+    ax.set_xticks(state.x.ticks)
+    ax.set_xticklabels(state.x.tick_labels)
+
+    ax.set_ylabel("y")
+    ax.set_yticks(state.y.ticks)
+    ax.set_yticklabels(state.y.tick_labels)
+
+    ax.set_zlabel("z")
+    ax.set_zticks(state.z.ticks)
+    ax.set_zticklabels(state.z.tick_labels)
+
+    ax.set_title(f"3D Contour, time step: {current_time_name}")
+
+    fig.add_axes(ax, label=f"{file_name}-{current_time_name}")
+    for idx, node in curr_nodes.iterrows():
+        x = node["X"]
+        y = node["Y"]
+        z = node["Z"]
+        x_ind = round(x / state.mesh_seed_size) + state.x.offset
+        y_ind = round(y / state.mesh_seed_size) + state.y.offset
+        z_ind = round(z / state.mesh_seed_size) + state.z.offset
+        temp = node["Temp"]
+        if (x % state.mesh_seed_size == 0) and (y % state.mesh_seed_size == 0) and (z % state.mesh_seed_size == 0) and voxels[x_ind, y_ind, z_ind]:
+            color = "blue"
+            if temp >= 1450:
+                color = "gray"
+            elif temp >= 1300:
+                color = "crimson"
+            elif temp >= 1150:
+                color = "red"
+            elif temp >= 1000:
+                color = "goldenrod"
+            elif temp >= 850:
+                color = "yellow"
+            elif temp >= 700:
+                color = "lime"
+            elif temp >= 550:
+                color = "green"
+            elif temp >= 400:
+                color = "cyan"
+
+            colors[x_ind, y_ind, z_ind] = mcolors.CSS4_COLORS[color]
+
+    ax.voxels(voxels, facecolors=colors)
+
+    plt.savefig(save_str)
+    if show_plot:
+        plt.show()
+    plt.close(fig)
+
+
+def create_hollow_array(x, y, z):
+    x_ind, y_ind, z_ind = np.indices((x, y, z))
+    return ((x_ind <= 0 ) | (x_ind >= x - 1)) | ((y_ind <= 0) | (y_ind >= y - 1)) | ((z_ind <= 0 ) | (z_ind >= z - 1))
 
 
 def ensure_hdf(input_file: str, cwd: str) -> str:
@@ -449,7 +724,8 @@ def ensure_hdf(input_file: str, cwd: str) -> str:
     hdfs_path_file = os.path.join(hdfs_path, input_file)
     if not os.path.exists(cwd_file):
         if not os.path.exists(hdfs_path_file):
-            sys.exit("Error: .hdf5 file could not be found.")
+            print("Error: .hdf5 file could not be found.")
+            return
         return hdfs_path_file
     return cwd_file
 
