@@ -25,8 +25,10 @@ from abaqusConstants import *
 from types import IntType
 import numpy as np
 import threading
-import multiprocessing
+from multiprocessing import Pool
 import json
+import re
+
 
 # Constants
 MAX_THREADS = 8
@@ -37,106 +39,32 @@ default_config = {
     "nodeset_max_threads": 50,
     "step_temps_max_threads": 20
 }
-
+odb_file = ""
 # Create directory to store npzs
 out_dir = os.path.join(os.getcwd(), "tmp_npz")
 os.mkdir(out_dir)
 coord_file = os.path.join(out_dir, "node_coords.npz")
 frame_time_file = os.path.join(out_dir, "step_frame_increments.npz")
-
-def read_nodeset_items(sema, nodesets, outdir, nodeset_name):
-    # Multithreading intended function for reading nodeset data
-    sema.acquire()
-    print("\tExtracting nodeset data from nodeset {}".format(nodeset_name))
-    out_nodeset_name = os.path.join(outdir, nodeset_name)
-    out_nodeset_name += ".npz"
-    np.savez_compressed(out_nodeset_name, np.array([node.label for node in nodesets[nodeset_name].nodes]))
-    print("\tFinished processing nodeset {}".format(nodeset_name))
-    sema.release()
+# Create output directory for temperatures
+temps_dir = os.path.join(out_dir, "temps")
+os.mkdir(temps_dir)
 
 
-def read_step_data(odb_filename, step_name):
-
-    global MAX_THREADS
-
-    # Multithreading intended function for reading steps' data
-    frame_threading_sema = threading.Semaphore(config["step_temps_max_threads"])
-    
-    # Error if I don't repeat these steps
-    odb = openOdb(odb_filename, readOnly=True)
-    steps = odb.steps
-    assembly = odb.rootAssembly
-
-    print("Working on temperatures from step: {}".format(step_name))
-    curr_step_dir = os.path.join(temps_dir, step_name)
-    os.mkdir(curr_step_dir)
-
-    step_frame_extraction_threads = list()
-    for i in range(len(steps[step_name].frames)):
-        thread = threading.Thread(target=read_frame_temp, args=(frame_threading_sema, steps, assembly, step_name, i, curr_step_dir))
-        thread.start()
-        step_frame_extraction_threads.append(thread)
-        if len(step_frame_extraction_threads) >= MAX_THREADS:
-            for i, created_thread in enumerate(step_frame_extraction_threads):
-                created_thread.join()
-                if not created_thread.is_alive():
-                    step_frame_extraction_threads.pop(i)
-
-    for i, thread in enumerate(step_frame_extraction_threads):
-        thread.join()
-        if not thread.is_alive():
-            step_frame_extraction_threads.pop(i)
-
-    odb.close()
-
-def unpack_read_step_data(args):
-    read_step_data(*args)
+# Read config if it exists or use default config
+if os.path.isfile(CONFIG_FILENAME):
+    with open(CONFIG_FILENAME, 'r') as config_file:
+        config = json.load(config_file)
+else:
+    config = default_config
 
 
-def read_frame_temp(sema, steps, assembly, step_name, frame_num, outdir):
-    # Multithreading function for reading information from frames
-    sema.acquire()
-    frame = steps[step_name].frames[frame_num]
-    field = frame.fieldOutputs['NT11'].getSubset(region=assembly.instances['PART-1-1'].nodeSets[assembly.instances['PART-1-1'].nodeSets.keys()[0]])
-    node_temps = []
-    for item in field.values:
-        # e.g. for node in values
-        node = item.nodeLabel    # unnecessary
-        temp = item.data
-        node_temps.append(temp)
-    np.savez_compressed(os.path.join(outdir, "frame_{}".format(frame_num)), np.array(node_temps))
-    sema.release()
-
-def read_frame_coords(frame):
-    # The below reference pulls from the nodeset representing all nodes
-    coords = frame.fieldOutputs['COORD'].getSubset(region=assembly.instances['PART-1-1'].nodeSets[assembly.instances['PART-1-1'].nodeSets.keys()[0]])
-    print("\tGetting node coordinates")
-
-    coord_arr = []
-    for item in coords.values:
-        # e.g. for node in values
-        node = item.nodeLabel
-        coord = item.data    # outputs [xcoord, ycoord, zcoord]
-        xyz = []
-        for axis in coord:
-            xyz.append(axis)
-        coord_arr.append([node, xyz[0], xyz[1], xyz[2]])
-    np.savez_compressed(coord_file, np.array(coord_arr))
-
-    pass
-
-if __name__ == "__main__":
+def main():
+    global odb_file
     args = sys.argv
 
     odb_filename = args[1]
+    odb_file = odb_filename
     inp_filename = args[2]
-
-    # Read config if it exists or use default config
-    if os.path.isfile(CONFIG_FILENAME):
-        with open(CONFIG_FILENAME, 'r') as config_file:
-            config = json.load(config_file)
-    else:
-        config = default_config
 
     # Create multithread limiter object
 
@@ -175,38 +103,113 @@ if __name__ == "__main__":
     # Loop through all the nodesets and get the nodes that they cover
     nodesets = assembly.instances['PART-1-1'].nodeSets # returns a dictionary of ODB objects
 
-    nodeset_thread_sema = threading.Semaphore(config["nodeset_max_threads"])
-    nodeset_extraction_threads = list()
+    #nodeset_thread_sema = threading.Semaphore(config["nodeset_max_threads"])
+    data = list()
     for key in nodesets.keys():
-        thread = threading.Thread(target=read_nodeset_items, args=(nodeset_thread_sema, nodesets, nodeset_dir, key))
-        thread.start()
-        nodeset_extraction_threads.append(thread)
-    # Extract coordinates
-    coord_thread = threading.Thread(target=read_frame_coords, args=(steps[steps.keys()[0]].frames[0],))
-    coord_thread.start()
-    nodeset_extraction_threads.append(coord_thread)
-    for thread in nodeset_extraction_threads:
-        thread.join()
+        data.append((nodesets, nodeset_dir, key))
+    with Pool() as pool:
+        pool.starmap(read_nodeset_items, data)
+
+    with Pool() as pool:
+        pool.starmap(read_frame_coords, steps[steps.keys()[0]].frames[0])
 
     # EXTRACT NODESET DATA
     # --------------------
 
-    # Create output directory for temperatures
-    temps_dir = os.path.join(out_dir, "temps")
-    os.mkdir(temps_dir)
-
     # Get argument tuples for extraction function and close ODB
-    step_temps_args = [(odb_filename, step_name) for step_name in steps.keys()]
     odb.close()
 
     # Begin processes that will get temperature data for each frame of each step
-    pool = multiprocessing.Pool(config["max_processors"])
-    pool.map(unpack_read_step_data, step_temps_args)
-    # step_extraction_threads = list()
-    # for step in steps.keys():
-    #     thread = threading.Thread(target=read_step_data, args=(, steps, step))
-    #     thread.start()
-    #     step_extraction_threads.append(thread)
+    with Pool() as pool:
+        pool.starmap(read_step_data, steps.keys())
 
-    # for thread in step_extraction_threads:
-    #     thread.join()
+
+def read_nodeset_items(nodesets, outdir, nodeset_name):
+    # Multithreading intended function for reading nodeset data
+    #sema.acquire()
+    print("\tExtracting nodeset data from nodeset {}".format(nodeset_name))
+    out_nodeset_name = os.path.join(outdir, nodeset_name)
+    out_nodeset_name += ".npz"
+    np.savez_compressed(out_nodeset_name, np.array([node.label for node in nodesets[nodeset_name].nodes]))
+    print("\tFinished processing nodeset {}".format(nodeset_name))
+    #sema.release()
+
+
+def read_step_data(step_name):
+
+    global MAX_THREADS
+    global config
+    global odb_file
+    global temps_dir
+
+    # Multithreading intended function for reading steps' data
+    frame_threading_sema = threading.Semaphore(config["step_temps_max_threads"])
+    
+    # Error if I don't repeat these steps
+    odb = openOdb(odb_file, readOnly=True)
+    steps = odb.steps
+    assembly = odb.rootAssembly
+
+    print("Working on temperatures from step: {}".format(step_name))
+    curr_step_dir = os.path.join(temps_dir, step_name)
+    os.mkdir(curr_step_dir)
+
+    step_frame_extraction_threads = list()
+    for i in range(len(steps[step_name].frames)):
+        thread = threading.Thread(target=read_frame_temp, args=(frame_threading_sema, steps, assembly, step_name, i, curr_step_dir))
+        thread.start()
+        step_frame_extraction_threads.append(thread)
+        if len(step_frame_extraction_threads) >= MAX_THREADS:
+            for i, created_thread in enumerate(step_frame_extraction_threads):
+                created_thread.join()
+                if not created_thread.is_alive():
+                    step_frame_extraction_threads.pop(i)
+
+    for i, thread in enumerate(step_frame_extraction_threads):
+        thread.join()
+        if not thread.is_alive():
+            step_frame_extraction_threads.pop(i)
+
+    odb.close()
+
+
+def read_frame_temp(sema, steps, assembly, step_name, frame_num, outdir):
+    # Multithreading function for reading information from frames
+    sema.acquire()
+    frame = steps[step_name].frames[frame_num]
+    field = frame.fieldOutputs['NT11'].getSubset(region=assembly.instances['PART-1-1'].nodeSets[assembly.instances['PART-1-1'].nodeSets.keys()[0]])
+    node_temps = []
+    for item in field.values:
+        # e.g. for node in values
+        node = item.nodeLabel    # unnecessary
+        temp = item.data
+        node_temps.append(temp)
+    np.savez_compressed(os.path.join(outdir, "frame_{}".format(frame_num)), np.array(node_temps))
+    sema.release()
+
+def read_frame_coords(frame):
+
+    global odb_file
+
+    odb = openOdb(odb_file, readOnly=True)
+    steps = odb.steps
+    assembly = odb.rootAssembly
+    # The below reference pulls from the nodeset representing all nodes
+    coords = frame.fieldOutputs['COORD'].getSubset(region=assembly.instances['PART-1-1'].nodeSets[assembly.instances['PART-1-1'].nodeSets.keys()[0]])
+    print("\tGetting node coordinates")
+
+    coord_arr = []
+    for item in coords.values:
+        # e.g. for node in values
+        node = item.nodeLabel
+        coord = item.data    # outputs [xcoord, ycoord, zcoord]
+        xyz = []
+        for axis in coord:
+            xyz.append(axis)
+        coord_arr.append([node, xyz[0], xyz[1], xyz[2]])
+    np.savez_compressed(coord_file, np.array(coord_arr))
+
+    odb.close()
+
+if __name__ == "__main__":
+    main()

@@ -38,6 +38,8 @@ class CustomAxis:
         self.tick_labels = [format(round(v, 2), ".2f") for v in self.vals]
         self.ticks = list(range(len(self.tick_labels)))
         self.offset = int(0 - (self.vals[0] / step))
+        del self.vals
+        self.vals = None
 
 
 class State:
@@ -46,6 +48,8 @@ class State:
 
         self.cwd = os.path.dirname(os.path.realpath(__file__))
         self.target_file = None
+        # TODO fix
+        self.results_dir = self.make_results_dir()
 
         self.x = CustomAxis()
         self.y = CustomAxis()
@@ -164,9 +168,9 @@ state, settings  -- Show the current state of the settings of the plotter"""
 
 
     def __str__(self):
-        return f"""X Range:                 {self.x.low} to {self.x.high + self.mesh_seed_size}
-Y Range:                 {self.y.low} to {self.y.high + self.mesh_seed_size}
-Z Range:                 {self.z.low} to {self.z.high + self.mesh_seed_size}
+        return f"""X Range:                 {self.x.low} to {self.x.high + self.mesh_seed_size if self.mesh_seed_size is not None else "Unknown: set the seed size"}
+Y Range:                 {self.y.low} to {self.y.high + self.mesh_seed_size if self.mesh_seed_size is not None else "Unknown: set the seed size"}
+Z Range:                 {self.z.low} to {self.z.high + self.mesh_seed_size if self.mesh_seed_size is not None else "Unknown: set the seed size"}
 Time Range:              {self.time_low} to {self.time_high}
 Seed Size of the Mesh:   {self.mesh_seed_size}
 View Angle:              {self.angle}
@@ -177,6 +181,13 @@ Is each time-step being shown in the matplotlib interactive viewer? {'Yes' if se
 
 Data loaded into memory: {'Yes' if self.loaded else 'No'}"""
 
+    def make_results_dir(self):
+        results_dir = os.path.join(self.cwd, "results")
+        if not os.path.exists(results_dir):
+            print(f"Making {results_dir}")
+            os.mkdir(results_dir)
+        return results_dir
+    
     def set_mesh_seed_size(self, seed):
         self.mesh_seed_size = seed
 
@@ -261,54 +272,58 @@ def main():
     user_input = ""
     print("ODBPlotter v.0.1")
     while state.main_loop:
-        print()
-        user_input = input("> ")
-        user_input = user_input.strip().lower()
+        try:
+            print()
+            user_input = input("> ")
+            user_input = user_input.strip().lower()
 
-        match(user_input):
+            match(user_input):
 
-            case ("exit" | "quit" | "q"):
-                state.main_loop = False
+                case ("exit" | "quit" | "q"):
+                    state.main_loop = False
 
-            case ("select"):
-                select_files(state)
-                print(f"Target .hdf5 file: {state.target_file}")
+                case ("select"):
+                    select_files(state)
+                    print(f"Target .hdf5 file: {state.target_file}")
 
-            case ("seed" | "mesh" | "step"):
-                set_seed_size(state)
-                print(f"Seed size set to: {state.mesh_seed_size}")
+                case ("seed" | "mesh" | "step"):
+                    set_seed_size(state)
+                    print(f"Seed size set to: {state.mesh_seed_size}")
 
-            case ("extrema" | "range"):
-                get_extrema(state)
-                print(f"Physical Range values updated")
+                case ("extrema" | "range"):
+                    get_extrema(state)
+                    print(f"Physical Range values updated")
 
-            case ("time"):
-                set_time(state)
-                print(f"Time Range values updated")
+                case ("time"):
+                    set_time(state)
+                    print(f"Time Range values updated")
 
-            case ("process"):
-                load_hdf(state)
+                case ("process"):
+                    load_hdf(state)
 
-            case ("angle"):
-                get_views(state)
-                print(f"Angle Updated")
+                case ("angle"):
+                    get_views(state)
+                    print(f"Angle Updated")
 
-            case ("show-all"):
-                state.show_plots = not state.show_plots
-                print(f"Plots will now {'BE' if state.show_plots else 'NOT BE'} shown")
+                case ("show-all"):
+                    state.show_plots = not state.show_plots
+                    print(f"Plots will now {'BE' if state.show_plots else 'NOT BE'} shown")
 
-            case ("plot" | "show"):
-                plot_voxels(state)
+                case ("plot" | "show"):
+                    plot_voxels(state)
 
-            case ("state" | "settings"):
-                print(state)
+                case ("state" | "settings"):
+                    print(state)
 
-            case ("help"):
-                print(state.help_menu)
+                case ("help"):
+                    print(state.help_menu)
 
-            case _:
-                print('Invalid option. Use "help" to see available options')
+                case _:
+                    print('Invalid option. Use "help" to see available options')
 
+        except KeyboardInterrupt:
+            print("\nKeyboard Interrupt Received, returning to main menu")
+            print('(From this menu, use the "exit" command to exit, or Control-D/EOF)')
 
 def confirm(message, default=None):
     while True:
@@ -518,15 +533,22 @@ def load_hdf(state):
     coords_df = get_coords(state.target_file)
     state.bounded_nodes = list(
             coords_df[
-                (coords_df["x"] <= state.x.high) & (coords_df["x"] >= state.x.low) &
-                (coords_df["y"] <= state.y.high) & (coords_df["y"] >= state.y.low) &
-                (coords_df["z"] <= state.z.high) & (coords_df["z"] >= state.z.low)]["Node Labels"]
+                (((coords_df["x"] == state.x.high) | (coords_df["x"] == state.x.low)) & ((coords_df["y"] >= state.y.low) & (coords_df["y"] <= state.y.high) & (coords_df["z"] >= state.z.low) & (coords_df["z"] <= state.z.high))) |
+                (((coords_df["y"] == state.y.high) | (coords_df["y"] == state.y.low)) & ((coords_df["x"] >= state.x.low) & (coords_df["x"] <= state.x.high) & (coords_df["z"] >= state.z.low) & (coords_df["z"] <= state.z.high))) |
+                (((coords_df["z"] == state.z.high) | (coords_df["z"] == state.z.low)) & ((coords_df["x"] >= state.x.low) & (coords_df["x"] <= state.x.high) & (coords_df["y"] >= state.y.low) & (coords_df["y"] <= state.y.high)))
+                ]
+                ["Node Labels"]
             )
 
     state.bounded_nodes_size = len(state.bounded_nodes)
+    print(f"Extracting from {state.bounded_nodes_size} Nodes!")
 
     with Pool() as pool:
-        results = pool.map(read_node_data, zip(state.bounded_nodes, [state.target_file for _ in range(state.bounded_nodes_size)]))
+        # TODO can imap be used? starred imap?
+        data = list()
+        for node in state.bounded_nodes:
+            data.append((node, state.target_file))
+        results = pool.starmap(read_node_data, data)
 
     state.out_nodes = pd.concat(results)
     state.out_nodes = state.out_nodes[(state.out_nodes["Time"] <= state.time_high) & (state.out_nodes["Time"] >= state.time_low)]
@@ -553,7 +575,7 @@ def get_views(state):
         else:
             try:
                 user_input = int(user_input)
-                if 0 > user_input > (len(views_list) + 1):
+                if 0 > user_input > (len(state.views_list) + 1):
                     raise ValueError
 
                 state.angle = state.views_list[user_input - 1]
@@ -625,10 +647,6 @@ def plot_voxels(state):
         print('Error, you must load the contents of a .hdf5 file into memory with the "process" command in order to plot')
         return
 
-    results_dir = os.path.join(state.cwd, "results")
-    if not os.path.exists(results_dir):
-        os.mkdir(results_dir)
-
     # out_nodes["Time"] has the time values for each node, we only need one
     # Divide length by len(bounded_nodes), go up to that
     times = state.out_nodes["Time"]
@@ -636,21 +654,27 @@ def plot_voxels(state):
     # If you're showing every plot, do it slowly, in order
     if state.show_plots:
         for current_time in times[:final_time_idx]:
-            plot_time_slice(current_time, times, state, True)
+            plot_time_slice((current_time, times, state))
 
     # If each plot is not shown, batch-process, out of order.
     else:
         with Pool() as pool:
-            print("Hello")
-            pool.imap_unordered(plot_time_slice, zip(times[:final_time_idx], [times for _ in range(final_time_idx)], [state for _ in range(final_time_idx)], [False for _ in range(final_time_idx)]))
+            print("Please wait while the plotter prepares your images...")
+            # TODO can imap_unordered by used? starimap_unordered?
+            data = list()
+            for time in times[:final_time_idx]:
+                data.append((time, times, state))
+            pool.starmap(plot_time_slice, data)
 
 
-def plot_time_slice(current_time, times, state, show_plot):
+def plot_time_slice(data):
+    current_time, times, state = data
     curr_nodes = state.out_nodes[times == current_time]
     current_time_name = format(round(current_time, 2), ".2f")
-    print(f"Plotting time step {current_time_name}")
+    if state.show_plots:
+        print(f"Plotting time step {current_time_name}")
     file_name = state.target_file.split("/")[-1].split(".")[0]
-    save_str = f"{results_dir}/{file_name}-{current_time_name}.png"
+    save_str = f"{state.results_dir}/{file_name}-{current_time_name}.png"
 
     voxels = create_hollow_array(state.x.size, state.y.size, state.z.size)
     colors = np.empty(shape=(state.x.size, state.y.size, state.z.size), dtype=object)
@@ -708,7 +732,7 @@ def plot_time_slice(current_time, times, state, show_plot):
     ax.voxels(voxels, facecolors=colors)
 
     plt.savefig(save_str)
-    if show_plot:
+    if state.show_plots:
         plt.show()
     plt.close(fig)
 
@@ -718,7 +742,7 @@ def create_hollow_array(x, y, z):
     return ((x_ind <= 0 ) | (x_ind >= x - 1)) | ((y_ind <= 0) | (y_ind >= y - 1)) | ((z_ind <= 0 ) | (z_ind >= z - 1))
 
 
-def ensure_hdf(input_file: str, cwd: str) -> str:
+def ensure_hdf(input_file, cwd):
     cwd_file = os.path.join(cwd, input_file)
     hdfs_path = os.path.join(cwd, "hdfs")
     hdfs_path_file = os.path.join(hdfs_path, input_file)
@@ -730,7 +754,7 @@ def ensure_hdf(input_file: str, cwd: str) -> str:
     return cwd_file
 
 
-def process_odb(input_files: list, cwd: str) -> str:
+def process_odb(input_files, cwd):
 
     output_dir = os.path.join(cwd, "hdfs")
     if not os.path.exists(output_dir):
@@ -753,19 +777,16 @@ def process_odb(input_files: list, cwd: str) -> str:
     npz_dir = os.path.join(cwd, "tmp_npz")
 
     # Adapted from CJ's general purpose npz to hdf code
-    filename_list = []
+    filename_data_list = []
     for root, _, files in os.walk(npz_dir, topdown=True):
         for filename in files:
-            filename_list.append(os.path.join(root, filename))
+            filename_data_list.append((os.path.join(root, filename), npz_dir, output_file))
 
     # Convert to HD5
     os.chdir(output_dir)
-    with h5py.File(output_file, "w") as hdf5_file:
-        for item in filename_list:
-            npz = np.load(item)
-            arr = npz[npz.files[0]]
-            item_name = os.path.splitext(item)[0].replace(npz_dir, "")
-            hdf5_file.create_dataset(item_name, data=arr, compression="gzip")
+    with Pool() as pool:
+        # can imap be used here? starimap?
+        pool.starmap(read_npz_to_hdf, filename_data_list)
 
     os.chdir(cwd)
     if os.path.exists(npz_dir):
@@ -774,7 +795,16 @@ def process_odb(input_files: list, cwd: str) -> str:
     return os.path.join(output_dir, output_file)
 
 
-def get_coords(hdf5_filename: str) -> pd.DataFrame:
+def read_npz_to_hdf(data):
+    item, npz_dir, output_file = data
+    with h5py.File(output_file, "w") as hdf5_file:
+        npz = np.load(item)
+        arr = npz[npz.files[0]]
+        item_name = os.path.splitext(item)[0].replace(npz_dir, "")
+        hdf5_file.create_dataset(item_name, data=arr, compression="gzip")
+
+
+def get_coords(hdf5_filename):
     """Gets all coordinates of the HDF5 file related to its nodes."""
     with h5py.File(hdf5_filename, "r") as hdf5_file:
        coords = hdf5_file["node_coords"][:]
@@ -783,9 +813,8 @@ def get_coords(hdf5_filename: str) -> pd.DataFrame:
     return out_data
 
 
-def read_node_data(data) -> pd.DataFrame:
+def read_node_data(node_label, hdf5_filename):
     """Creates a long format DataFrame with rows being nodes that represent different important information per node."""
-    node_label, hdf5_filename = data
     with h5py.File(hdf5_filename, "r") as hdf5_file:
         coords = hdf5_file["node_coords"][:]
         node_coords = coords[np.where(coords[:, 0] == node_label)[0][0]][1:]
