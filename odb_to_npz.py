@@ -42,12 +42,14 @@ default_config = {
 odb_file = ""
 # Create directory to store npzs
 out_dir = os.path.join(os.getcwd(), "tmp_npz")
-os.mkdir(out_dir)
+if not os.path.exists(out_dir):
+    os.mkdir(out_dir)
 coord_file = os.path.join(out_dir, "node_coords.npz")
 frame_time_file = os.path.join(out_dir, "step_frame_increments.npz")
 # Create output directory for temperatures
 temps_dir = os.path.join(out_dir, "temps")
-os.mkdir(temps_dir)
+if not os.path.exists(temps_dir):
+    os.mkdir(temps_dir)
 
 
 # Read config if it exists or use default config
@@ -73,7 +75,8 @@ def main():
 
     with open(inp_filename, 'r') as file:
         time_dir = os.path.join(out_dir, "step_frame_times")
-        os.mkdir(time_dir)
+        if not os.path.exists(time_dir):
+            os.mkdir(time_dir)
         last_total = 0
         inp_file = file.readlines()
         for i in range(len(inp_file)):
@@ -99,7 +102,8 @@ def main():
 
     # Create output directory for nodesets
     nodeset_dir = os.path.join(out_dir, "nodesets")
-    os.mkdir(nodeset_dir)
+    if not os.path.exists(nodeset_dir):
+        os.mkdir(nodeset_dir)
     # Loop through all the nodesets and get the nodes that they cover
     nodesets = assembly.instances['PART-1-1'].nodeSets # returns a dictionary of ODB objects
 
@@ -107,11 +111,13 @@ def main():
     data = list()
     for key in nodesets.keys():
         data.append((nodesets, nodeset_dir, key))
-    with Pool() as pool:
-        pool.starmap(read_nodeset_items, data)
+    pool = Pool()
+    pool.starmap(read_nodeset_items, data)
+    pool.close()
 
-    with Pool() as pool:
-        pool.starmap(read_frame_coords, steps[steps.keys()[0]].frames[0])
+    pool = Pool()
+    pool.starmap(read_frame_coords, steps[steps.keys()[0]].frames[0])
+    pool.close()
 
     # EXTRACT NODESET DATA
     # --------------------
@@ -120,8 +126,9 @@ def main():
     odb.close()
 
     # Begin processes that will get temperature data for each frame of each step
-    with Pool() as pool:
-        pool.starmap(read_step_data, steps.keys())
+    pool = Pool()
+    pool.starmap(read_step_data, steps.keys())
+    pool.close()
 
 
 def read_nodeset_items(nodesets, outdir, nodeset_name):
@@ -142,9 +149,6 @@ def read_step_data(step_name):
     global odb_file
     global temps_dir
 
-    # Multithreading intended function for reading steps' data
-    frame_threading_sema = threading.Semaphore(config["step_temps_max_threads"])
-    
     # Error if I don't repeat these steps
     odb = openOdb(odb_file, readOnly=True)
     steps = odb.steps
@@ -152,40 +156,28 @@ def read_step_data(step_name):
 
     print("Working on temperatures from step: {}".format(step_name))
     curr_step_dir = os.path.join(temps_dir, step_name)
-    os.mkdir(curr_step_dir)
+    if not os.path.exists(curr_step_dir):
+        os.mkdir(curr_step_dir)
 
-    step_frame_extraction_threads = list()
-    for i in range(len(steps[step_name].frames)):
-        thread = threading.Thread(target=read_frame_temp, args=(frame_threading_sema, steps, assembly, step_name, i, curr_step_dir))
-        thread.start()
-        step_frame_extraction_threads.append(thread)
-        if len(step_frame_extraction_threads) >= MAX_THREADS:
-            for i, created_thread in enumerate(step_frame_extraction_threads):
-                created_thread.join()
-                if not created_thread.is_alive():
-                    step_frame_extraction_threads.pop(i)
+    data = [(steps, assembly, step_name, i, curr_step_dir) for i in range(len(steps[step_name].frames))]
 
-    for i, thread in enumerate(step_frame_extraction_threads):
-        thread.join()
-        if not thread.is_alive():
-            step_frame_extraction_threads.pop(i)
+    pool = Pool()
+    pool.starmap(read_frame_temp, data)
+    pool.close()
 
     odb.close()
 
 
-def read_frame_temp(sema, steps, assembly, step_name, frame_num, outdir):
+def read_frame_temp(steps, assembly, step_name, frame_num, outdir):
     # Multithreading function for reading information from frames
-    sema.acquire()
     frame = steps[step_name].frames[frame_num]
     field = frame.fieldOutputs['NT11'].getSubset(region=assembly.instances['PART-1-1'].nodeSets[assembly.instances['PART-1-1'].nodeSets.keys()[0]])
     node_temps = []
     for item in field.values:
         # e.g. for node in values
-        node = item.nodeLabel    # unnecessary
         temp = item.data
         node_temps.append(temp)
     np.savez_compressed(os.path.join(outdir, "frame_{}".format(frame_num)), np.array(node_temps))
-    sema.release()
 
 def read_frame_coords(frame):
 

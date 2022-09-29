@@ -654,7 +654,7 @@ def plot_voxels(state):
     # If you're showing every plot, do it slowly, in order
     if state.show_plots:
         for current_time in times[:final_time_idx]:
-            plot_time_slice((current_time, times, state))
+            plot_time_slice(current_time, times, state)
 
     # If each plot is not shown, batch-process, out of order.
     else:
@@ -667,8 +667,7 @@ def plot_voxels(state):
             pool.starmap(plot_time_slice, data)
 
 
-def plot_time_slice(data):
-    current_time, times, state = data
+def plot_time_slice(current_time, times, state):
     curr_nodes = state.out_nodes[times == current_time]
     current_time_name = format(round(current_time, 2), ".2f")
     if state.show_plots:
@@ -795,8 +794,7 @@ def process_odb(input_files, cwd):
     return os.path.join(output_dir, output_file)
 
 
-def read_npz_to_hdf(data):
-    item, npz_dir, output_file = data
+def read_npz_to_hdf(item, npz_dir, output_file):
     with h5py.File(output_file, "w") as hdf5_file:
         npz = np.load(item)
         arr = npz[npz.files[0]]
