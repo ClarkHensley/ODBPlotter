@@ -670,6 +670,7 @@ def plot_voxels(state):
 def plot_time_slice(current_time, times, state):
     curr_nodes = state.out_nodes[times == current_time]
     current_time_name = format(round(current_time, 2), ".2f")
+    print("A")
     if state.show_plots:
         print(f"Plotting time step {current_time_name}")
     file_name = state.target_file.split("/")[-1].split(".")[0]
@@ -728,7 +729,9 @@ def plot_time_slice(current_time, times, state):
 
             colors[x_ind, y_ind, z_ind] = mcolors.CSS4_COLORS[color]
 
-    ax.voxels(voxels, facecolors=colors)
+    #ax.voxels(voxels, facecolors=colors)
+    #ax.voxels(voxels, cmap="turbo")
+    ax.voxels(voxels, facecolors="turbo")
 
     plt.savefig(save_str)
     if state.show_plots:
@@ -776,16 +779,13 @@ def process_odb(input_files, cwd):
     npz_dir = os.path.join(cwd, "tmp_npz")
 
     # Adapted from CJ's general purpose npz to hdf code
-    filename_data_list = []
-    for root, _, files in os.walk(npz_dir, topdown=True):
-        for filename in files:
-            filename_data_list.append((os.path.join(root, filename), npz_dir, output_file))
-
     # Convert to HD5
     os.chdir(output_dir)
-    with Pool() as pool:
-        # can imap be used here? starimap?
-        pool.starmap(read_npz_to_hdf, filename_data_list)
+    with h5py.File(output_file, "w") as hdf5_file:
+        for root, _, files in os.walk(npz_dir, topdown=True):
+            for filename in files:
+                item = os.path.join(root, filename)
+                read_npz_to_hdf(item, npz_dir, hdf5_file)
 
     os.chdir(cwd)
     if os.path.exists(npz_dir):
@@ -794,12 +794,11 @@ def process_odb(input_files, cwd):
     return os.path.join(output_dir, output_file)
 
 
-def read_npz_to_hdf(item, npz_dir, output_file):
-    with h5py.File(output_file, "w") as hdf5_file:
-        npz = np.load(item)
-        arr = npz[npz.files[0]]
-        item_name = os.path.splitext(item)[0].replace(npz_dir, "")
-        hdf5_file.create_dataset(item_name, data=arr, compression="gzip")
+def read_npz_to_hdf(item, npz_dir, hdf5_file):
+    npz = np.load(item)
+    arr = npz[npz.files[0]]
+    item_name = os.path.splitext(item)[0].replace(npz_dir, "")
+    hdf5_file.create_dataset(item_name, data=arr, compression="gzip")
 
 
 def get_coords(hdf5_filename):
