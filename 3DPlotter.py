@@ -4,6 +4,7 @@ import sys
 import argparse
 import h5py
 import shutil
+import json
 import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -46,9 +47,10 @@ class State:
 
     def __init__(self):
 
-        self.cwd = os.path.dirname(os.path.realpath(__file__))
+        self.cwd = os.getcwd()
         self.target_file = None
-        # TODO fix
+        self.target_file_name = None
+
         self.results_dir = self.make_results_dir()
 
         self.x = CustomAxis()
@@ -69,81 +71,11 @@ class State:
 
         self.loaded = False
 
-        self.views = {
-        # "View: face on top"  : (elev, azim, roll)
-        "Top Face: back"                    : (90, 0, 0),
-        "Top Face: right"                   : (90, 0, -90),
-        "Top Face: left"                    : (90, 0, 90),
-        "Top Face: front"                   : (90, 0, 180),
-        "Bottom Face: back"                 : (-90, 0, 180),
-        "Bottom Face: right"                : (-90, 0, 90),
-        "Bottom Face: left"                 : (-90, 0, -90),
-        "Bottom Face: front"                : (-90, 0, 0),
-        "Left Face: front"                  : (0, 90, -90),
-        "Left Face: top"                    : (0, 90, 0),
-        "Left Face: back"                   : (0, 90, 90),
-        "Left Face: bottom"                 : (0, 90, 180),
-        "Right Face: front"                 : (0, -90, 90),
-        "Right Face: top"                   : (0, -90, 180),
-        "Right Face: back"                  : (0, -90, -90),
-        "Right Face: bottom"                : (0, -90, 0),
-        "Front Face: right"                 : (0, 0, -90),
-        "Front Face: top"                   : (0, 0, 0),
-        "Front Face: left"                  : (0, 0, 90),
-        "Front Face: bottom"                : (0, 0, 180),
-        "Back Face: left"                   : (0, 180, -90),
-        "Back Face: top"                    : (0, 180, 0),
-        "Back Face: right"                  : (0, 180, 90),
-        "Back Face: bottom"                 : (0, 180, 180),
-        "Top-Left Edge: top"                : (45, 90, 0),
-        "Top-Left Edge: left"               : (45, 90, 180),
-        "Top-Right Edge: top"               : (45, -90, 0),
-        "Top-Right Edge: right"             : (45, -90, 180),
-        "Top-Front Edge: top"               : (45, 0, 0),
-        "Top-Front Edge: front"             : (45, 0, 180),
-        "Top-Back Edge: top"                : (45, 180, 0),
-        "Top-Back Edge: back"               : (45, 180, 180),
-        "Bottom-Left Edge: left"            : (-45, 90, 0),
-        "Bottom-Left Edge: bottom"          : (-45, 90, 180),
-        "Bottom-Right Edge: right"          : (-45, -90, 0),
-        "Bottom-Right Edge: bottom"         : (-45, -90, 180),
-        "Bottom-Front Edge: front"          : (-45, 0, 0),
-        "Bottom-Front Edge: bottom"         : (-45, 0, 180),
-        "Bottom-Back Edge: back"            : (-45, 180, 0),
-        "Bottom-Back Edge: bottom"          : (-45, 180, 180),
-        "Front-Left Edge: left"             : (0, 45, 90),
-        "Front-Left Edge: front"            : (0, 45, -90),
-        "Front-Right Edge: front"           : (0, -45, 90),
-        "Front-Right Edge: right"           : (0, -45, -90),
-        "Back-Left Edge: back"              : (0, 135, 90),
-        "Back-Left Edge: left"              : (0, 135, -90),
-        "Back-Right Edge: right"            : (0, -135, 90),
-        "Back-Right Edge: back"             : (0, -135, -90),
-        "Top-Right-Front Vertex: right"     : (45, -45, -120),
-        "Top-Right-Front Vertex: top"       : (45, -45, 0),
-        "Top-Right-Front Vertex: front"     : (45, -45, 120),
-        "Top-Left-Front Vertex: front"      : (45, 45, -120),
-        "Top-Left-Front Vertex: top"        : (45, 45, 0),
-        "Top-Left-Front Vertex: left"       : (45, 45, 120),
-        "Top-Right-Back Vertex: right"      : (45, -135, 120),
-        "Top-Right-Back Vertex: top"        : (45, -135, 0),
-        "Top-Right-Back Vertex: back"       : (45, -135, -120),
-        "Top-Left-Back Vertex: back"        : (45, 135, 120),
-        "Top-Left-Back Vertex: top"         : (45, 135, 0),
-        "Top-Left-Back Vertex: left"        : (45, 135, -120),
-        "Bottom-Right-Front Vertex: right"  : (-45, -45, -60),
-        "Bottom-Right-Front Vertex: bottom" : (-45, -45, -180),
-        "Bottom-Right-Front Vertex: front"  : (-45, -45, 60),
-        "Bottom-Left-Front Vertex: bottom"  : (-45, 45, -180),
-        "Bottom-Left-Front Vertex: front"   : (-45, 45, -60),
-        "Bottom-Left-Front Vertex: left"    : (-45, 45, 60),
-        "Bottom-Right-Back Vertex: right"   : (-45, -135, 60),
-        "Bottom-Right-Back Vertex: back"    : (-45, -135, -60),
-        "Bottom-Right-Back Vertex: bottom"  : (-45, -135, -180),
-        "Bottom-Left-Back Vertex: bottom"   : (-45, 135, -180),
-        "Bottom-Left-Back Vertex: left"     : (-45, 135, -60),
-        "Bottom-Left-Back Vertex: back"     : (-45, 135, 60)
-        }    
+        self.colormap_str = "turbo"
+        self.colormap = self.select_colormap()
+        self.meltpoint = None
+
+        self.views = self.load_json(os.path.join(os.path.join(self.cwd, "views"), "views.json"))
 
         self.views_list = list(self.views.keys())
 
@@ -157,7 +89,6 @@ class State:
 help             -- Show this menu
 quit, exit, q    -- Exit the ODBPlotter
 select           -- Select an hdf5 file (or generate an hdf5 file from a pair of .odb and .inp files)
-seed, mesh, step -- Set the Default Seed Size of the mesh
 extrema, range   -- Set the upper and lower x, y, and z bounds for plotting
 time             -- Set the upper and lower time bounds
 process          -- Actually load the selected data from the file set in select
@@ -257,6 +188,16 @@ Data loaded into memory: {'Yes' if self.loaded else 'No'}"""
         self.z.get_graph_elements(self.mesh_seed_size)
 
         self.loaded = True
+
+    def load_json(self, file):
+        with open(file, "r") as o_file:
+            return json.load(o_file)
+
+    def select_colormap(self):
+        colormaps_path = os.path.join(self.cwd, "colormaps")
+        colormaps_dict = self.load_json(os.path.join(colormaps_path, "colormaps.json"))
+        return mcolors.ListedColormap(colormaps_dict[self.colormap_str])
+
 
 
 def main():
@@ -396,6 +337,22 @@ def select_files(state):
             if(confirm(f"You entered {user_input}", "yes")):
                 break
         state.target_file = ensure_hdf(user_input, state.cwd)
+        state.target_file_name = state.target_file.split(".")[0]
+
+    target_dir = os.path.dirname(state.target_file)
+    target_file_config = os.path.join(target_dir, f"{state.target_file_name}.json")
+    if os.path.exists(target_file_config):
+        target_file_config_dict = state.load_json(target_file_config)
+        state.set_mesh_seed_size(target_file_config_dict["seed"])
+        print(f"Setting Default Seed Size of the Mesh to stored value of {state.mesh_seed_size}")
+        state.meltpoint = target_file_config_dict["meltpoint"]
+        print(f"Setting Default melpoint of the Mesh to stored value of {state.meltpoint}")
+
+    else:
+        set_seed_size(state)
+        set_meltpoint(state)
+        with open(target_file_config, "w") as tfc:
+            json.dump({"seed": state.mesh_seed_size, "meltpoint": state.meltpoint}, tfc)
 
 
 def get_extrema(state):
@@ -431,6 +388,19 @@ def set_seed_size(state):
 
         except ValueError:
             print("Error, Default Seed Size must be a number")
+
+
+def set_meltpoint(state):
+    while True:
+        try:
+            meltpoint = float(input("Enter the meltpoint of the Mesh: "))
+
+            if confirm(f"Meltpoint: {meltpoint}", "yes"):
+                state.meltpoint = meltpoint
+                break
+
+        except ValueError:
+            print("Error, melpoint must be a number")
 
 
 def set_time(state):
@@ -708,27 +678,10 @@ def plot_time_slice(current_time, times, state):
         z_ind = round(z / state.mesh_seed_size) + state.z.offset
         temp = node["Temp"]
         if (x % state.mesh_seed_size == 0) and (y % state.mesh_seed_size == 0) and (z % state.mesh_seed_size == 0) and voxels[x_ind, y_ind, z_ind]:
-            color = "blue"
-            if temp >= 1450:
-                color = "gray"
-            elif temp >= 1300:
-                color = "crimson"
-            elif temp >= 1150:
-                color = "red"
-            elif temp >= 1000:
-                color = "goldenrod"
-            elif temp >= 850:
-                color = "yellow"
-            elif temp >= 700:
-                color = "lime"
-            elif temp >= 550:
-                color = "green"
-            elif temp >= 400:
-                color = "cyan"
-
-            # USE THIS
-            # https://gist.github.com/mikhailov-work/ee72ba4191942acecc03fe6da94fc73f
-            colors[x_ind, y_ind, z_ind] = mcolors.CSS4_COLORS[color]
+            if temp > state.meltpoint:
+                colors[x_ind, y_ind, z_ind] = mcolors.CSS4_COLORS["gray"]
+            else:
+                colors[x_ind, y_ind, z_ind] = state.colormap.__call__(temp / state.meltpoint)
 
     ax.voxels(voxels, facecolors=colors)
 
@@ -770,6 +723,7 @@ def process_odb(input_files, cwd):
     if user_input != "":
         filename = user_input
 
+    state.target_file_name = user_input
     output_file = f"{filename}.hdf5"
 
     odb_to_npz_args = ["abq2019", "python", "odb_to_npz.py", odb_file, inp_file]
