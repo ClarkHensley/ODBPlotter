@@ -218,49 +218,47 @@ def main():
             user_input = input("> ")
             user_input = user_input.strip().lower()
 
-            match(user_input):
+            if user_input in ("exit", "quit", "q"):
+                state.main_loop = False
 
-                case ("exit" | "quit" | "q"):
-                    state.main_loop = False
+            elif user_input in ("select"):
+                select_files(state)
+                print(f"Target .hdf5 file: {state.target_file}")
 
-                case ("select"):
-                    select_files(state)
-                    print(f"Target .hdf5 file: {state.target_file}")
+            elif user_input in ("seed", "mesh", "step"):
+                set_seed_size(state)
+                print(f"Seed size set to: {state.mesh_seed_size}")
 
-                case ("seed" | "mesh" | "step"):
-                    set_seed_size(state)
-                    print(f"Seed size set to: {state.mesh_seed_size}")
+            elif user_input in ("extrema", "range"):
+                get_extrema(state)
+                print(f"Physical Range values updated")
 
-                case ("extrema" | "range"):
-                    get_extrema(state)
-                    print(f"Physical Range values updated")
+            elif user_input in ("time"):
+                set_time(state)
+                print(f"Time Range values updated")
 
-                case ("time"):
-                    set_time(state)
-                    print(f"Time Range values updated")
+            elif user_input in ("process"):
+                load_hdf(state)
 
-                case ("process"):
-                    load_hdf(state)
+            elif user_input in ("angle"):
+                get_views(state)
+                print(f"Angle Updated")
 
-                case ("angle"):
-                    get_views(state)
-                    print(f"Angle Updated")
+            elif user_input in ("show-all"):
+                state.show_plots = not state.show_plots
+                print(f"Plots will now {'BE' if state.show_plots else 'NOT BE'} shown")
 
-                case ("show-all"):
-                    state.show_plots = not state.show_plots
-                    print(f"Plots will now {'BE' if state.show_plots else 'NOT BE'} shown")
+            elif user_input in ("plot", "show"):
+                plot_voxels(state)
 
-                case ("plot" | "show"):
-                    plot_voxels(state)
+            elif user_input in ("state", "settings"):
+                print(state)
 
-                case ("state" | "settings"):
-                    print(state)
+            elif user_input in ("help"):
+                print(state.help_menu)
 
-                case ("help"):
-                    print(state.help_menu)
-
-                case _:
-                    print('Invalid option. Use "help" to see available options')
+            else:
+                print('Invalid option. Use "help" to see available options')
 
         except KeyboardInterrupt:
             print("\nKeyboard Interrupt Received, returning to main menu")
