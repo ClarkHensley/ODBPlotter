@@ -670,7 +670,6 @@ def plot_voxels(state):
 def plot_time_slice(current_time, times, state):
     curr_nodes = state.out_nodes[times == current_time]
     current_time_name = format(round(current_time, 2), ".2f")
-    print("A")
     if state.show_plots:
         print(f"Plotting time step {current_time_name}")
     file_name = state.target_file.split("/")[-1].split(".")[0]
@@ -727,11 +726,11 @@ def plot_time_slice(current_time, times, state):
             elif temp >= 400:
                 color = "cyan"
 
+            # USE THIS
+            # https://gist.github.com/mikhailov-work/ee72ba4191942acecc03fe6da94fc73f
             colors[x_ind, y_ind, z_ind] = mcolors.CSS4_COLORS[color]
 
-    #ax.voxels(voxels, facecolors=colors)
-    #ax.voxels(voxels, cmap="turbo")
-    ax.voxels(voxels, facecolors="turbo")
+    ax.voxels(voxels, facecolors=colors)
 
     plt.savefig(save_str)
     if state.show_plots:
