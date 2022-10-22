@@ -31,16 +31,6 @@ class CustomAxis:
         self.high = None
         self.vals = None
         self.size = None
-        self.tick_labels = None
-        self.ticks = None
-        self.offset = None
-
-    def get_graph_elements(self, step):
-        self.tick_labels = [format(round(v, 2), ".2f") for v in self.vals]
-        self.ticks = list(range(len(self.tick_labels)))
-        self.offset = int(0 - (self.vals[0] / step))
-        del self.vals
-        self.vals = None
 
 
 class State:
@@ -72,7 +62,7 @@ class State:
         self.loaded = False
 
         self.colormap_str = "turbo"
-        self.colormap = self.select_colormap()
+        self.colormap = None
         self.meltpoint = None
 
         self.views = self.load_json(os.path.join(os.path.join(self.cwd, "views"), "views.json"))
@@ -99,58 +89,61 @@ state, settings  -- Show the current state of the settings of the plotter"""
 
 
     def __str__(self):
-        return f"""X Range:                 {self.x.low} to {self.x.high + self.mesh_seed_size if self.mesh_seed_size is not None else "Unknown: set the seed size"}
-Y Range:                 {self.y.low} to {self.y.high + self.mesh_seed_size if self.mesh_seed_size is not None else "Unknown: set the seed size"}
-Z Range:                 {self.z.low} to {self.z.high + self.mesh_seed_size if self.mesh_seed_size is not None else "Unknown: set the seed size"}
+        return f"""X Range:                 {self.x.low} to {self.x.high - self.mesh_seed_size if self.x.high is not None and self.mesh_seed_size is not None else "not set"}
+Y Range:                 {self.y.low} to {self.y.high - self.mesh_seed_size if self.y.high is not None and self.mesh_seed_size is not None else "not set"}
+Z Range:                 {self.z.low} to {self.z.high - self.mesh_seed_size if self.z.high is not None and self.mesh_seed_size is not None else "net set"}
 Time Range:              {self.time_low} to {self.time_high}
 Seed Size of the Mesh:   {self.mesh_seed_size}
 View Angle:              {self.angle}
 View Elevation:          {self.elev}
 View Azimuth:            {self.azim}
 View Roll:               {self.roll}
-Is each time-step being shown in the matplotlib interactive viewer? {'Yes' if self.show_plots else 'No'}
 
-Data loaded into memory: {'Yes' if self.loaded else 'No'}"""
+Data loaded into memory: {'Yes' if self.loaded else 'No'}
+
+Is each time-step being shown in the matplotlib interactive viewer? {'Yes' if self.show_plots else 'No'}"""
 
     def make_results_dir(self):
         results_dir = os.path.join(self.cwd, "results")
         if not os.path.exists(results_dir):
-            print(f"Making {results_dir}")
             os.mkdir(results_dir)
         return results_dir
     
     def set_mesh_seed_size(self, seed):
         self.mesh_seed_size = seed
 
-        if self.x.high is not None:
-            self.x.high -= self.mesh_seed_size
-
-        if self.y.high is not None:
-            self.y.high -= self.mesh_seed_size
-
-        if self.z.high is not None:
-            self.z.high -= self.mesh_seed_size
+        #  if self.x.high is not None:
+        #      self.x.high += self.mesh_seed_size
+        #
+        #  if self.y.high is not None:
+        #      self.y.high += self.mesh_seed_size
+        #
+        #  if self.z.high is not None:
+        #      self.z.high += self.mesh_seed_size
 
     def set_x_extrema(self, low, high):
         self.x.low = low
-        if self.mesh_seed_size is not None:
-            self.x.high = (high - self.mesh_seed_size)
-        else:
-            self.x.high = high
+        #  if self.mesh_seed_size is not None:
+        #      self.x.high = (high + self.mesh_seed_size)
+        #  else:
+        #      self.x.high = high
+        self.x.high = high
 
     def set_y_extrema(self, low, high):
         self.y.low = low
-        if self.mesh_seed_size is not None:
-            self.y.high = (high - self.mesh_seed_size)
-        else:
-            self.y.high = high
+        #  if self.mesh_seed_size is not None:
+        #      self.y.high = (high + self.mesh_seed_size)
+        #  else:
+        #      self.y.high = high
+        self.y.high = high
 
     def set_z_extrema(self, low, high):
         self.z.low = low
-        if self.mesh_seed_size is not None:
-            self.z.high = (high - self.mesh_seed_size)
-        else:
-            self.z.high = high
+        #  if self.mesh_seed_size is not None:
+        #      self.z.high = (high + self.mesh_seed_size)
+        #  else:
+        #      self.z.high = high
+        self.z.high = high
 
     def pre_process_data(self):
         self.out_nodes_low_time = self.out_nodes[self.out_nodes["Time"] == self.time_low]
@@ -166,6 +159,7 @@ Data loaded into memory: {'Yes' if self.loaded else 'No'}"""
                 self.y.vals.append(_y)
                 self.z.vals.append(_z)
 
+        # Makes these in-order lists of unique values
         self.x.vals = list(dict.fromkeys(self.x.vals))
         self.y.vals = list(dict.fromkeys(self.y.vals))
         self.z.vals = list(dict.fromkeys(self.z.vals))
@@ -174,18 +168,13 @@ Data loaded into memory: {'Yes' if self.loaded else 'No'}"""
         self.y.vals.sort()
         self.z.vals.sort()
 
-        self.x.size = len(self.x.vals)
+        self.x.vals = np.asarray(self.x.vals)
+        self.y.vals = np.asarray(self.y.vals)
+        self.z.vals = np.asarray(self.z.vals)
 
+        self.x.size = len(self.x.vals)
         self.y.size = len(self.y.vals)
         self.z.size = len(self.z.vals)
-
-        self.x.vals.append(self.x.vals[-1] + self.mesh_seed_size)
-        self.y.vals.append(self.y.vals[-1] + self.mesh_seed_size)
-        self.z.vals.append(self.z.vals[-1] + self.mesh_seed_size)
-
-        self.x.get_graph_elements(self.mesh_seed_size)
-        self.y.get_graph_elements(self.mesh_seed_size)
-        self.z.get_graph_elements(self.mesh_seed_size)
 
         self.loaded = True
 
@@ -194,10 +183,9 @@ Data loaded into memory: {'Yes' if self.loaded else 'No'}"""
             return json.load(o_file)
 
     def select_colormap(self):
-        colormaps_path = os.path.join(self.cwd, "colormaps")
-        colormaps_dict = self.load_json(os.path.join(colormaps_path, "colormaps.json"))
-        return mcolors.ListedColormap(colormaps_dict[self.colormap_str])
-
+        norm = mcolors.Normalize(0, self.meltpoint)
+        self.colormap = plt.cm.ScalarMappable(norm=norm, cmap=self.colormap_str)
+        self.colormap.set_array([])
 
 
 def main():
@@ -206,8 +194,6 @@ def main():
 
     # TODO Process input json file and/or cli switches here
     # process_input(state)
-
-    #############################################
 
     # Outer while governs user input
     user_input = ""
@@ -221,7 +207,7 @@ def main():
             if user_input in ("exit", "quit", "q"):
                 state.main_loop = False
 
-            elif user_input in ("select"):
+            elif user_input in ("select", ):
                 select_files(state)
                 print(f"Target .hdf5 file: {state.target_file}")
 
@@ -233,28 +219,28 @@ def main():
                 get_extrema(state)
                 print(f"Physical Range values updated")
 
-            elif user_input in ("time"):
+            elif user_input in ("time", ):
                 set_time(state)
                 print(f"Time Range values updated")
 
-            elif user_input in ("process"):
+            elif user_input in ("process", ):
                 load_hdf(state)
 
-            elif user_input in ("angle"):
+            elif user_input in ("angle", ):
                 get_views(state)
                 print(f"Angle Updated")
 
-            elif user_input in ("show-all"):
+            elif user_input in ("show-all", ):
                 state.show_plots = not state.show_plots
                 print(f"Plots will now {'BE' if state.show_plots else 'NOT BE'} shown")
 
             elif user_input in ("plot", "show"):
-                plot_voxels(state)
+                plot_time_range(state)
 
             elif user_input in ("state", "settings"):
                 print(state)
 
-            elif user_input in ("help"):
+            elif user_input in ("help", ):
                 print(state.help_menu)
 
             else:
@@ -264,42 +250,37 @@ def main():
             print("\nKeyboard Interrupt Received, returning to main menu")
             print('(From this menu, use the "exit" command to exit, or Control-D/EOF)')
 
+        except EOFError:
+            print("\nExiting")
+            state.main_loop = False
+
+
 def confirm(message, default=None):
+    check_str = "Is this correct (y/n)? "
+    yes_vals = ("yes", "y")
+    no_vals = ("no", "n")
+    if isinstance(default, str):
+        if default.lower() in yes_vals:
+            yes_vals = ("yes", "y", "")
+            check_str = "Is this correct (Y/n)? "
+        elif default.lower() in no_vals:
+            no_vals = ("no", "n", "")
+            check_str = "Is this correct (y/N)? "
+
     while True:
         print(message)
-
-        if default is None:
-            user_input = input("Is this correct (y/n)? ")
-            if user_input.lower() in ("yes", "y"):
-                return True
-            elif user_input.lower() in ("no", "n"):
-                return False
-            else:
-                print("Error: invalid input")
-
-        elif isinstance(default, str):
-            if default.lower() in ("y", "yes"):
-                user_input = input("Is this correct (Y/n)? ")
-                if user_input.lower() in ("yes", "y", ""):
-                    return True
-                elif user_input.lower() in ("no", "n"):
-                    return False
-                else:
-                    print("Error: invalid input")
-
-            elif default.lower() in ("n", "no"):
-                user_input = input("Is this correct (y/N)? ")
-                if user_input.lower() in ("yes", "y"):
-                    return True
-                elif user_input.lower() in ("no", "n", ""):
-                    return False
-                else:
-                    print("Error: invalid input")
+        user_input = input(check_str)
+        if user_input.lower() in yes_vals:
+            return True
+        elif user_input.lower() in no_vals:
+            return False
+        else:
+            print("Error: invalid input")
 
 
 def select_files(state):
     odb_options = ("odb", ".odb")
-    hdf_options = (".hdf", "hdf", ".hdf5", "hdf5")
+    hdf_options = (".hdf", "hdf", ".hdf5", "hdf5", "hdfs", ".hdfs")
 
     while True:
         user_input = input('Please enter either "hdf" if you plan to open .hdf5 file or "odb" if you plan to open a .odb file: ')
@@ -333,8 +314,11 @@ def select_files(state):
         while True:
             user_input = input("Please enter the path of the hdf5 file, or the name of the hdf5 file in the hdfs directory: ")
             if(confirm(f"You entered {user_input}", "yes")):
+                state.target_file = ensure_hdf(user_input, state.cwd)
+
+            if state.target_file is not None:
                 break
-        state.target_file = ensure_hdf(user_input, state.cwd)
+
         state.target_file_name = state.target_file.split(".")[0]
 
     target_dir = os.path.dirname(state.target_file)
@@ -344,11 +328,13 @@ def select_files(state):
         state.set_mesh_seed_size(target_file_config_dict["seed"])
         print(f"Setting Default Seed Size of the Mesh to stored value of {state.mesh_seed_size}")
         state.meltpoint = target_file_config_dict["meltpoint"]
+        state.select_colormap()
         print(f"Setting Default melpoint of the Mesh to stored value of {state.meltpoint}")
 
     else:
         set_seed_size(state)
         set_meltpoint(state)
+        state.select_colormap()
         with open(target_file_config, "w") as tfc:
             json.dump({"seed": state.mesh_seed_size, "meltpoint": state.meltpoint}, tfc)
 
@@ -361,7 +347,7 @@ def get_extrema(state):
                 ("lower Y", "upper Y"): None,
                 ("lower Z", "upper Z"): None,
                 }
-        for extremum in extrema:
+        for extremum in extrema.keys():
             extrema[extremum] = process_extrema(extremum)
 
         x_low, x_high = extrema[("lower X", "upper X")]
@@ -455,26 +441,26 @@ def process_extrema(keys):
     return results
 
 
-def process_input():
-    cwd = os.path.dirname(os.path.realpath(__file__))
-    input_files = ".hdf5 or (.odb and .inp)"
-
-    parser = argparse.ArgumentParser(description="ODB Extractor and Plotter")
-    parser.add_argument(input_files, nargs="*")
-
-    results = vars(parser.parse_args())[input_files]
-
-    if len(results) == 1:
-        # Ensure the hdf5 exists
-        target_file = ensure_hdf(results[0], cwd)
-    elif len(results) == 2:
-        # Process the given odb and inp files
-        target_file = process_odb(results, cwd)
-    else:
-        pass
-        #sys.exit("Error: You must supply either a .hdf5 file to read from or a pair of .odb and .inp files to process")
-
-    return cwd, target_file
+#  def process_input():
+#      cwd = os.path.dirname(os.path.realpath(__file__))
+#      input_files = ".hdf5 or (.odb and .inp)"
+#
+#      parser = argparse.ArgumentParser(description="ODB Extractor and Plotter")
+#      parser.add_argument(input_files, nargs="*")
+#
+#      results = vars(parser.parse_args())[input_files]
+#
+#      if len(results) == 1:
+#          # Ensure the hdf5 exists
+#          target_file = ensure_hdf(results[0], cwd)
+#      elif len(results) == 2:
+#          # Process the given odb and inp files
+#          target_file = process_odb(results, cwd)
+#      else:
+#          pass
+#          #sys.exit("Error: You must supply either a .hdf5 file to read from or a pair of .odb and .inp files to process")
+#
+#      return cwd, target_file
 
 
 def load_hdf(state):
@@ -609,9 +595,9 @@ def print_views(views):
     print()
 
 
-def plot_voxels(state):
+def plot_time_range(state):
 
-    if state.out_nodes is None:
+    if not state.loaded:
         print('Error, you must load the contents of a .hdf5 file into memory with the "process" command in order to plot')
         return
 
@@ -637,51 +623,92 @@ def plot_voxels(state):
 
 def plot_time_slice(current_time, times, state):
     curr_nodes = state.out_nodes[times == current_time]
+
     current_time_name = format(round(current_time, 2), ".2f")
-    if state.show_plots:
-        print(f"Plotting time step {current_time_name}")
     file_name = state.target_file.split("/")[-1].split(".")[0]
     save_str = f"{state.results_dir}/{file_name}-{current_time_name}.png"
-
-    voxels = create_hollow_array(state.x.size, state.y.size, state.z.size)
-    colors = np.empty(shape=(state.x.size, state.y.size, state.z.size), dtype=object)
-
     fig = plt.figure(figsize=(19.2, 10.8))
     ax = plt.axes(projection="3d", label=f"{file_name}-{current_time_name}")
+
+    ax.set_xlabel("x")
+    ax.set_ylabel("y")
+    ax.set_zlabel("z")
 
     ax.set_box_aspect((state.x.size, state.y.size, state.z.size))
     ax.view_init(elev=state.elev, azim=state.azim, roll=state.roll)
 
-    ax.set_xlabel("x")
-    ax.set_xticks(state.x.ticks)
-    ax.set_xticklabels(state.x.tick_labels)
-
-    ax.set_ylabel("y")
-    ax.set_yticks(state.y.ticks)
-    ax.set_yticklabels(state.y.tick_labels)
-
-    ax.set_zlabel("z")
-    ax.set_zticks(state.z.ticks)
-    ax.set_zticklabels(state.z.tick_labels)
-
     ax.set_title(f"3D Contour, time step: {current_time_name}")
-
     fig.add_axes(ax, label=f"{file_name}-{current_time_name}")
-    for idx, node in curr_nodes.iterrows():
-        x = node["X"]
-        y = node["Y"]
-        z = node["Z"]
-        x_ind = round(x / state.mesh_seed_size) + state.x.offset
-        y_ind = round(y / state.mesh_seed_size) + state.y.offset
-        z_ind = round(z / state.mesh_seed_size) + state.z.offset
-        temp = node["Temp"]
-        if (x % state.mesh_seed_size == 0) and (y % state.mesh_seed_size == 0) and (z % state.mesh_seed_size == 0) and voxels[x_ind, y_ind, z_ind]:
-            if temp > state.meltpoint:
-                colors[x_ind, y_ind, z_ind] = mcolors.CSS4_COLORS["gray"]
-            else:
-                colors[x_ind, y_ind, z_ind] = state.colormap.__call__(temp / state.meltpoint)
 
-    ax.voxels(voxels, facecolors=colors)
+    if state.show_plots:
+        print(f"Plotting time step {current_time_name}")
+
+    faces = ["x_low", "x_high", "y_low", "y_high", "z_low", "z_high"]
+    for face in faces:
+        indices = ["X", "Y", "Z"]
+        if "x" in face:
+            indices.remove("X")
+            y = state.y.vals
+            z = state.z.vals
+
+            if "low" in face:
+                X = np.full((state.z.size, state.y.size), state.x.vals[0])
+                temp_mask = curr_nodes["X"] == state.x.vals[0]
+            elif "high" in face:
+                X = np.full((state.z.size, state.y.size), state.x.vals[-1])
+                temp_mask = curr_nodes["X"] == state.x.vals[-1]
+            
+            Y, Z = np.meshgrid(y, z)
+            face_shape = X.shape
+
+        elif "y" in face:
+            indices.remove("Y")
+            x = state.x.vals
+            z = state.z.vals
+
+            if "low" in face:
+                Y = np.full((state.z.size, state.x.size), state.y.vals[0])
+                temp_mask = curr_nodes["Y"] == state.y.vals[0]
+            elif "high" in face:
+                Y = np.full((state.z.size, state.x.size), state.y.vals[-1])
+                temp_mask = curr_nodes["Y"] == state.y.vals[-1]
+            
+            X, Z = np.meshgrid(x, z)
+            face_shape = Y.shape
+
+        elif "z" in face:
+            indices.remove("Z")
+            x = state.x.vals
+            y = state.y.vals
+
+            if "low" in face:
+                Z = np.full((state.y.size, state.x.size), state.z.vals[0])
+                temp_mask = curr_nodes["Z"] == state.z.vals[0]
+            elif "high" in face:
+                Z = np.full((state.y.size, state.x.size), state.z.vals[-1])
+                temp_mask = curr_nodes["Z"] == state.z.vals[-1]
+            
+            X, Y = np.meshgrid(x, y)
+            face_shape = Z.shape
+
+        temp_nodes = curr_nodes[temp_mask]
+        first_dim = temp_nodes[indices[0]]  
+        first_offset = first_dim.min()
+        second_dim = temp_nodes[indices[1]]
+        second_offset = second_dim.min()
+        dim1, dim2 = face_shape
+        colors = np.zeros((dim1, dim2, 3))
+        for _, node in temp_nodes.iterrows():
+            temp = node["Temp"]
+            ind_2 = int((node[indices[0]] - first_offset) / state.mesh_seed_size)
+            ind_1 = int((node[indices[1]] - second_offset) / state.mesh_seed_size)
+
+            if temp >= state.meltpoint:
+                colors[ind_1, ind_2] = (0.25, 0.25, 0.25)
+            else:
+                colors[ind_1, ind_2] = state.colormap.to_rgba(temp)[:3]
+
+        ax.plot_surface(X, Y, Z, facecolors=colors)
 
     plt.savefig(save_str)
     if state.show_plots:
@@ -689,12 +716,15 @@ def plot_time_slice(current_time, times, state):
     plt.close(fig)
 
 
-def create_hollow_array(x, y, z):
-    x_ind, y_ind, z_ind = np.indices((x, y, z))
-    return ((x_ind <= 0 ) | (x_ind >= x - 1)) | ((y_ind <= 0) | (y_ind >= y - 1)) | ((z_ind <= 0 ) | (z_ind >= z - 1))
+#  def create_hollow_array(x, y, z):
+#      x_ind, y_ind, z_ind = np.indices((x, y, z))
+#      return ((x_ind <= 0 ) | (x_ind >= x - 1)) | ((y_ind <= 0) | (y_ind >= y - 1)) | ((z_ind <= 0 ) | (z_ind >= z - 1))
 
 
 def ensure_hdf(input_file, cwd):
+    if input_file == "":
+        print("Error: .hdf5 file could not be found.")
+        return
     cwd_file = os.path.join(cwd, input_file)
     hdfs_path = os.path.join(cwd, "hdfs")
     hdfs_path_file = os.path.join(hdfs_path, input_file)
@@ -766,6 +796,8 @@ def read_node_data(node_label, hdf5_filename):
     with h5py.File(hdf5_filename, "r") as hdf5_file:
         coords = hdf5_file["node_coords"][:]
         node_coords = coords[np.where(coords[:, 0] == node_label)[0][0]][1:]
+
+        sys.exit(print(hdf5_file))
 
         temps = []
         times = []
